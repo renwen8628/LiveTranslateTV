@@ -67,7 +67,7 @@ data class SubtitleSettings(
     val remotePlayEnabled: Boolean = false,
 ) {
     companion object {
-        val FONT_SIZES = listOf(20, 24, 28, 32, 36, 42, 48)
+        val FONT_SIZES = listOf(12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48)
         val OPACITIES = (0..100 step 10).toList()
         val POSITIONS = (0..80 step 5).toList()
     }

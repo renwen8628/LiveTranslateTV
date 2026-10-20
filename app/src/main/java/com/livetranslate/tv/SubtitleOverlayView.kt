@@ -39,8 +39,9 @@ class SubtitleOverlayView(context: Context) : LinearLayout(context) {
         }
         visibility = View.VISIBLE
 
-        // Max width keeps long lines wrapping instead of running edge to edge.
-        val maxWidth = (resources.displayMetrics.widthPixels * 0.8f).toInt()
+        // Lines wrap at about half the screen (1000 px on a 1920 px TV), so a subtitle stays
+        // compact like regular film subtitles instead of running edge to edge.
+        val maxWidth = (resources.displayMetrics.widthPixels * MAX_WIDTH_FRACTION).toInt()
 
         originalView.apply {
             visibility = if (showOriginal) View.VISIBLE else View.GONE
@@ -72,4 +73,8 @@ class SubtitleOverlayView(context: Context) : LinearLayout(context) {
     }
 
     private fun dp(value: Float) = value * resources.displayMetrics.density
+
+    private companion object {
+        const val MAX_WIDTH_FRACTION = 0.52f
+    }
 }
