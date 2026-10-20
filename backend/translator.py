@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -75,6 +76,77 @@ OUTPUT_SCHEMA = {
 }
 
 
+def subtitle_prompt(text: str, context: list[ContextLine], game: str | None) -> str:
+    parts = []
+    if game:
+        parts.append(f"Game: {game}")
+    if context:
+        parts.append("Recent lines, oldest first:")
+        parts += [f"- EN: {c.source}\n  ZH: {c.translation}" for c in context]
+    parts.append(f"Translate this subtitle line:\n{text}")
+    return "\n\n".join(parts)
+
+
+class DeepSeekTranslator:
+    """DeepSeek chat API. The key stays in the backend, never on the TV."""
+
+    name = "deepseek"
+
+    def __init__(self, model: str = "deepseek-flash", timeout_s: float = 15.0):
+        import httpx
+
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY is not set")
+        self.model = model
+        self._client = httpx.AsyncClient(
+            base_url="https://api.deepseek.com",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout_s,
+        )
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    async def translate(self, text: str, context: list[ContextLine], game: str | None) -> Translation:
+        response = await self._client.post("/chat/completions", json={
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT + '\nReturn only a JSON object, '
+                 'for example: {"source": "Park: Go!", "translation": "Park：快走！"}'},
+                {"role": "user", "content": subtitle_prompt(text, context, game)},
+            ],
+            "response_format": {"type": "json_object"},
+            "thinking": {"type": "disabled"},
+            "max_tokens": 2000,
+            "stream": False,
+        })
+        response.raise_for_status()
+        payload = response.json()
+        usage = payload.get("usage") or {}
+        result = Translation(
+            source=text, translation="", model=payload.get("model", self.model),
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
+        )
+        choices = payload.get("choices") or []
+        if not choices or choices[0].get("finish_reason") != "stop":
+            log.warning("DeepSeek returned no complete answer")
+            return result
+        body = choices[0].get("message", {}).get("content")
+        if not body:
+            log.warning("DeepSeek returned empty content")
+            return result
+        data = json.loads(body)
+        if not isinstance(data, dict) or not all(
+            isinstance(data.get(key), str) for key in ("source", "translation")
+        ):
+            raise ValueError("DeepSeek response must contain string source and translation fields")
+        result.source = data["source"].strip() or text
+        result.translation = data["translation"].strip()
+        return result
+
+
 class ClaudeTranslator:
     """Claude via the Anthropic Python SDK. Credentials come from the environment
     (ANTHROPIC_API_KEY) and never leave this machine."""
@@ -91,20 +163,12 @@ class ClaudeTranslator:
         self.effort = effort
 
     async def translate(self, text: str, context: list[ContextLine], game: str | None) -> Translation:
-        parts = []
-        if game:
-            parts.append(f"Game: {game}")
-        if context:
-            parts.append("Recent lines, oldest first:")
-            parts += [f"- EN: {c.source}\n  ZH: {c.translation}" for c in context]
-        parts.append(f"Translate this subtitle line:\n{text}")
-
         response = await self._client.beta.messages.create(
             model=self.model,
             # Room for adaptive thinking plus a one-line JSON answer.
             max_tokens=2000,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": "\n\n".join(parts)}],
+            messages=[{"role": "user", "content": subtitle_prompt(text, context, game)}],
             # Effort is the speed/depth control on this model (thinking is always on).
             output_config={
                 "effort": self.effort,

@@ -12,7 +12,7 @@ is showing, so a slow translation never overwrites a newer subtitle.
 
 Usage:
     backend/.venv/bin/python backend/translation_server.py [--port 8766] [--game "Call of Duty"]
-    (--fake translates offline for testing; otherwise needs ANTHROPIC_API_KEY, e.g. in backend/.env)
+    (needs DEEPSEEK_API_KEY in backend/.env; --fake translates offline)
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from collections import deque
 from pathlib import Path
 
 import ws
-from translator import ClaudeTranslator, ContextLine, FakeTranslator, Translator
+from translator import ClaudeTranslator, ContextLine, DeepSeekTranslator, FakeTranslator, Translator
 
 log = logging.getLogger("server")
 CONTEXT_LINES = 6
@@ -147,22 +147,32 @@ async def main() -> None:
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--game", help="game title, gives the translator context")
     parser.add_argument("--fake", action="store_true", help="offline fake translator (no API calls)")
-    parser.add_argument("--model", default="claude-opus-5-5")
-    parser.add_argument("--effort", default="low", choices=["low", "medium", "high"])
+    parser.add_argument("--provider", choices=["deepseek", "claude"], default="deepseek")
+    parser.add_argument("--model", help="provider model (default: deepseek-flash / claude-opus-5-5)")
+    parser.add_argument("--effort", default="low", choices=["low", "medium", "high"],
+                        help="Claude thinking effort (only used with --provider claude)")
     args = parser.parse_args()
 
     load_dotenv(Path(__file__).with_name(".env"))
     if args.fake:
         translator: Translator = FakeTranslator()
+    elif args.provider == "deepseek":
+        if not os.environ.get("DEEPSEEK_API_KEY", "").strip():
+            raise SystemExit("DEEPSEEK_API_KEY is not set. Put DEEPSEEK_API_KEY=... in backend/.env, or run with --fake.")
+        translator = DeepSeekTranslator(model=args.model or "deepseek-flash")
     else:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise SystemExit("ANTHROPIC_API_KEY is not set. Put ANTHROPIC_API_KEY=... in backend/.env, or run with --fake.")
-        translator = ClaudeTranslator(model=args.model, effort=args.effort)
+        translator = ClaudeTranslator(model=args.model or "claude-opus-5-5", effort=args.effort)
 
-    server = await asyncio.start_server(lambda r, w: serve_client(r, w, translator, args.game), "0.0.0.0", args.port)
-    log.info("Translation backend (%s) on ws://%s:%d", translator.name, lan_ip(), args.port)
-    async with server:
-        await server.serve_forever()
+    try:
+        server = await asyncio.start_server(lambda r, w: serve_client(r, w, translator, args.game), "0.0.0.0", args.port)
+        log.info("Translation backend (%s) on ws://%s:%d", translator.name, lan_ip(), args.port)
+        async with server:
+            await server.serve_forever()
+    finally:
+        if isinstance(translator, DeepSeekTranslator):
+            await translator.close()
 
 
 if __name__ == "__main__":
