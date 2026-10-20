@@ -38,7 +38,10 @@ object OcrSubtitlePipeline {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var ocr: SubtitleOcr? = null
-    private val stabilizer = SubtitleTextStabilizer()
+    // Show on the first reading: in fast games (tested: Call of Duty) many lines are on screen
+    // for only 1-2 s, i.e. a single OCR reading, and requiring two readings dropped ~60% of them.
+    // Repeated readings of the same line still merge into that line.
+    private val stabilizer = SubtitleTextStabilizer(stableSamples = 1)
     private var totalLatencyMs = 0L
 
     fun start() {

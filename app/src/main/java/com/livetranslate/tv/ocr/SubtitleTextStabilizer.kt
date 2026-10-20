@@ -34,6 +34,8 @@ class SubtitleTextStabilizer(
     private var shown: String? = null
     private var shownId = 0L
     private var emptyCount = 0
+    /** Normalized text of the last few lines, to ignore fragments read during fades. */
+    private val recent = ArrayDeque<String>()
 
     /** Feed one OCR reading (null or blank = no subtitle visible). */
     fun onSample(raw: String?): Event? {
@@ -61,18 +63,30 @@ class SubtitleTextStabilizer(
 
         val current = shown
         return when {
-            current == null -> newLine(text)
+            current == null -> if (isFragmentOfRecent(text)) null else newLine(text)
             sameLine(current, text) -> {
-                // Same line: only report it if we now have more of it.
-                if (text != current && normalize(text).length > normalize(current).length) {
+                // Same line: only report it if it clearly grew (typewriter effect or a more
+                // complete read), not when a misread just adds a character ("m" -> "rn").
+                val nNew = normalize(text)
+                val nOld = normalize(current)
+                val grew = nNew.length > nOld.length &&
+                    (nNew.startsWith(nOld) || nNew.length >= nOld.length * 1.15)
+                if (grew) {
                     shown = text
                     Event.Update(shownId, text)
                 } else {
                     null
                 }
             }
+            isFragmentOfRecent(text) -> null
             else -> newLine(text)
         }
+    }
+
+    /** "ean is excele" read while "Oh, your Korean is excellent." fades out. */
+    private fun isFragmentOfRecent(text: String): Boolean {
+        val n = normalize(text)
+        return recent.any { it.length > n.length && it.contains(n) }
     }
 
     fun reset() {
@@ -80,11 +94,14 @@ class SubtitleTextStabilizer(
         candidateCount = 0
         shown = null
         emptyCount = 0
+        recent.clear()
     }
 
     private fun newLine(text: String): Event {
         shown = text
         shownId++
+        recent.addLast(normalize(text))
+        if (recent.size > RECENT_LINES) recent.removeFirst()
         return Event.Show(shownId, text)
     }
 
@@ -103,6 +120,8 @@ class SubtitleTextStabilizer(
     }
 
     companion object {
+        private const val RECENT_LINES = 3
+
         /** Lowercase letters and digits only, so punctuation/spacing OCR noise doesn't matter. */
         fun normalize(s: String): String = buildString(s.length) {
             for (c in s) if (c.isLetterOrDigit()) append(c.lowercaseChar())

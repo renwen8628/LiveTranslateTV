@@ -39,8 +39,8 @@ data class OcrReading(
  * Processes one frame at a time; frames that arrive while busy are skipped.
  */
 class SubtitleOcr(
-    /** Lines shorter than this (pixels at 720p) are HUD/UI text, not subtitles. */
-    private val minLineHeightPx: Int = 14,
+    /** Lines shorter than this (pixels at 720p) are too small to be subtitles. Game subtitles can be ~12 px. */
+    private val minLineHeightPx: Int = 9,
     private val minConfidence: Float = 0.4f,
     /** Downscale the crop before OCR (1.0 = none). Smaller is faster but misses small text. */
     private val scale: Float = 1.0f,
@@ -93,6 +93,7 @@ class SubtitleOcr(
         val candidates = lines
             .filter { it.height >= minLineHeightPx && it.confidence >= minConfidence }
             .filter { line -> line.text.count { it.isLetter() } >= 2 }
+            .filter { isDialogueLike(it.text) }
             .sortedBy { it.top }
         if (candidates.isEmpty()) return null
 
@@ -105,6 +106,18 @@ class SubtitleOcr(
             if (gap <= typicalHeight * 1.2 && line.height >= typicalHeight * 0.6) group.addFirst(line) else break
         }
         return group.joinToString(" ") { it.text.trim() }
+    }
+
+    /**
+     * Button hints and menu labels ("SELECT CLOSE", "QUIT MISSION") are short and all caps;
+     * dialogue has lowercase letters or is at least a few words long.
+     */
+    internal fun isDialogueLike(text: String): Boolean {
+        // A ratio, not "any lowercase": OCR sometimes reads "CLOSE" as "cLOSE".
+        val letters = text.count { it.isLetter() }
+        val mostlyLowercase = letters > 0 && text.count { it.isLowerCase() } >= letters * 0.3
+        val words = text.split(Regex("\\s+")).count { w -> w.count { it.isLetter() } >= 2 }
+        return mostlyLowercase || words >= 4
     }
 
     private fun cropToNv21(frame: LumaFrame, region: OcrRegion): InputImage {

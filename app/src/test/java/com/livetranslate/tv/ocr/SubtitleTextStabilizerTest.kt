@@ -76,4 +76,28 @@ class SubtitleTextStabilizerTest {
         assertNull(s.onSample("Yes."))
         assertEquals(Event.Show(2, "Yes."), s.onSample("Yes."))
     }
+
+    @Test
+    fun singleReadModeShowsImmediatelyAndMergesRereads() {
+        val s = SubtitleTextStabilizer(stableSamples = 1)
+        assertEquals(Event.Show(1, "Dunn: You gotta listen to heavy metal."), s.onSample("Dunn: You gotta listen to heavy metal."))
+        // A noisy re-read of the same line is not a new line.
+        assertNull(s.onSample("Dunn: You gotta listen to heavy rnetal"))
+        assertEquals(
+            Event.Show(2, "Cho: I was born in Seoul, you hick."),
+            s.onSample("Cho: I was born in Seoul, you hick."),
+        )
+    }
+
+    @Test
+    fun fragmentOfRecentLineDuringFadeIsIgnored() {
+        val s = SubtitleTextStabilizer(stableSamples = 1)
+        assertEquals(Event.Show(1, "Cho: Oh, your Korean is excellent."), s.onSample("Cho: Oh, your Korean is excellent."))
+        assertNull(s.onSample("ean is excelle"))
+        assertNull(s.onSample(null))
+        assertEquals(Event.Clear(1), s.onSample(null))
+        // Still a fragment of a recent line after the clear.
+        assertNull(s.onSample("your Korean is"))
+        assertEquals(Event.Show(2, "Ju Kwon: Sergeant, sir!"), s.onSample("Ju Kwon: Sergeant, sir!"))
+    }
 }
