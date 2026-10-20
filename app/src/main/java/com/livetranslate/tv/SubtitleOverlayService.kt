@@ -27,6 +27,10 @@ import androidx.core.content.ContextCompat
  * foreground keeps the process from being killed as a cached background app, but the
  * system can still stop it under memory pressure, so the service is START_STICKY and
  * restores itself from persisted settings when restarted.
+ *
+ * On the TCL test TV the firmware ("TclAppBoot") silently refuses startForeground() for this
+ * app, so the service runs as a normal background service. The process is still kept alive
+ * because a visible overlay window ranks it as perceptible. See docs/audio-capture-feasibility.md.
  */
 class SubtitleOverlayService : Service(), SubtitleManager.Listener {
 

@@ -1,7 +1,10 @@
 package com.livetranslate.tv
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -32,6 +35,8 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
     private lateinit var connectionText: TextView
     private val settingRows = mutableListOf<ChoiceRow<*>>()
     private var sampleIndex = 0
+    /** Audio test waiting on the RECORD_AUDIO permission prompt ("mic" or "playback"). */
+    private var pendingAudioProbe: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,6 +46,69 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
         rowsContainer = findViewById(R.id.rows)
         buildRows()
         toggleButton.requestFocus()
+        handleAudioProbeIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleAudioProbeIntent(intent)
+    }
+
+    /**
+     * Lets the Milestone 4 audio test be started over ADB. Use --activity-single-top so the
+     * intent reaches an already-open activity:
+     * am start --activity-single-top -n com.livetranslate.tv/.MainActivity --es audio_probe mic|playback
+     */
+    private fun handleAudioProbeIntent(intent: Intent?) {
+        val probe = intent?.getStringExtra(EXTRA_AUDIO_PROBE) ?: return
+        intent.removeExtra(EXTRA_AUDIO_PROBE)
+        startAudioProbe(probe)
+    }
+
+    private fun startAudioProbe(kind: String) {
+        android.util.Log.i("AudioProbe", "Starting audio test: $kind")
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingAudioProbe = kind
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_RECORD_AUDIO)
+            return
+        }
+        when (kind) {
+            "mic" -> AudioProbeService.startMic(this, AUDIO_PROBE_DELAY_S)
+            "playback" -> {
+                val mpm = getSystemService(MediaProjectionManager::class.java)
+                try {
+                    @Suppress("DEPRECATION")
+                    startActivityForResult(mpm.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
+                } catch (e: ActivityNotFoundException) {
+                    Toast.makeText(this, "Screen capture consent is not available on this TV", Toast.LENGTH_LONG).show()
+                    android.util.Log.w("AudioProbe", "MediaProjection consent activity not found", e)
+                }
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_RECORD_AUDIO) return
+        val kind = pendingAudioProbe.also { pendingAudioProbe = null } ?: return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            startAudioProbe(kind)
+        } else {
+            Toast.makeText(this, "Microphone permission denied", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_MEDIA_PROJECTION) return
+        if (resultCode == RESULT_OK && data != null) {
+            AudioProbeService.startPlayback(this, resultCode, data, AUDIO_PROBE_DELAY_S)
+        } else {
+            android.util.Log.w("AudioProbe", "Screen capture consent declined (result $resultCode)")
+            Toast.makeText(this, "Screen capture consent declined", Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onStart() {
@@ -140,6 +208,10 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             ).apply { bottomMargin = dp(8) },
         )
+
+        // Milestone 4 diagnostics.
+        addButton("Audio capture test: microphone") { startAudioProbe("mic") }
+        addButton("Audio capture test: app playback") { startAudioProbe("playback") }
 
         // Shown at the top, under the main status line, so it is always on screen.
         connectionText = TextView(this).apply {
@@ -280,6 +352,10 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
     }
 
     private companion object {
+        const val EXTRA_AUDIO_PROBE = "audio_probe"
+        const val REQUEST_RECORD_AUDIO = 10
+        const val REQUEST_MEDIA_PROJECTION = 11
+        const val AUDIO_PROBE_DELAY_S = 15
         val SAMPLES = listOf(
             "We need to move now." to "我们现在必须行动。",
             "Is anyone there?" to "有人在吗？",

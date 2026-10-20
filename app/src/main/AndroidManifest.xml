@@ -13,6 +13,13 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Milestone 4 audio capture test (AudioProbeService). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -57,6 +64,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Displays live translated subtitles over TV content and HDMI inputs while other apps are in the foreground." />
         </service>
+
+        <service
+            android:name=".AudioProbeService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaProjection" />
     </application>
 
 </manifest>
