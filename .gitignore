@@ -16,3 +16,6 @@ local.properties
 /.kotlin
 /.venv-nanopb
 /app/.cxx
+/backend/.venv
+/backend/.env
+__pycache__/

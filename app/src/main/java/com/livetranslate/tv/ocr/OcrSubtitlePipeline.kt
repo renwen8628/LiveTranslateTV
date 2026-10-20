@@ -5,13 +5,15 @@ import android.os.Looper
 import android.util.Log
 import com.livetranslate.tv.Subtitle
 import com.livetranslate.tv.SubtitleManager
+import com.livetranslate.tv.SubtitleRepository
 import com.livetranslate.tv.remoteplay.RemotePlayController
 
 /**
  * Remote Play frames -> OCR of the subtitle area -> stabilized subtitle lines -> overlay.
  *
- * Until translation is added, the recognized source text itself is shown so OCR accuracy
- * can be judged. [lineListener] is where translation will plug in.
+ * When the translation backend is connected, each line is sent to it and the English is
+ * shown until the translation arrives (via SubtitleRepository). Without a backend, the
+ * recognized English is shown on its own.
  *
  * Main thread only.
  */
@@ -43,6 +45,8 @@ object OcrSubtitlePipeline {
     // Repeated readings of the same line still merge into that line.
     private val stabilizer = SubtitleTextStabilizer(stableSamples = 1)
     private var totalLatencyMs = 0L
+    /** Sequence numbers for translation requests; one per new or updated line. */
+    private var requestSequence = 0L
 
     fun start() {
         if (ocr != null) return
@@ -96,13 +100,21 @@ object OcrSubtitlePipeline {
             is SubtitleTextStabilizer.Event.Clear -> {
                 Log.i(TAG, "Line #${event.id} cleared")
                 SubtitleManager.clearSubtitle()
+                SubtitleRepository.noteLocalClear()
             }
             null -> Unit
         }
     }
 
     private fun show(text: String) {
-        // Temporary until translation exists: show the recognized text.
-        SubtitleManager.setSubtitle(Subtitle(translatedText = text, originalText = null))
+        if (SubtitleRepository.isConnected) {
+            val sequence = ++requestSequence
+            SubtitleRepository.noteLocalLine(sequence)
+            SubtitleRepository.sendSource(sequence, text)
+            // English (as the original line) until the translation replaces it.
+            SubtitleManager.setSubtitle(Subtitle(translatedText = "", originalText = text))
+        } else {
+            SubtitleManager.setSubtitle(Subtitle(translatedText = text, originalText = null))
+        }
     }
 }

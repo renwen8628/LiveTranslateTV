@@ -39,6 +39,9 @@ object SubtitleRepository {
 
     private var lastSequence = -1L
     private var lastSequenceFinal = false
+    /** Lines up to this sequence already left the screen; their late translations show briefly. */
+    private var clearedUpTo = -1L
+    private const val LATE_TRANSLATION_MS = 3_000L
     private var socket: WebSocket? = null
     private var sentLanguages: Pair<String, String>? = null
     private var languages = "en" to "zh-CN"
@@ -50,6 +53,7 @@ object SubtitleRepository {
                 socket = ws
                 lastSequence = -1L
                 lastSequenceFinal = false
+                clearedUpTo = -1L
                 sentLanguages = null
                 sendHello()
             },
@@ -87,6 +91,34 @@ object SubtitleRepository {
         client.stop()
         socket = null
         setStatus(finalStatus)
+    }
+
+    val isConnected get() = socket != null && status is ConnectionStatus.Connected
+
+    /**
+     * Sends a subtitle line read on this TV (OCR) to the backend for translation.
+     * The reply comes back as a normal "subtitle" message with the same [sequence].
+     */
+    fun sendSource(sequence: Long, text: String): Boolean {
+        val ws = socket ?: return false
+        val msg = JSONObject()
+            .put("type", "source")
+            .put("sequence", sequence)
+            .put("text", text)
+        return ws.send(msg.toString())
+    }
+
+    /** A line with this sequence is now on screen locally; replies for older lines are outdated. */
+    fun noteLocalLine(sequence: Long) {
+        if (sequence > lastSequence) {
+            lastSequence = sequence
+            lastSequenceFinal = false
+        }
+    }
+
+    /** The current local line left the screen. */
+    fun noteLocalClear() {
+        clearedUpTo = lastSequence
     }
 
     /** Accepts ws:// or wss:// URLs; returns null if unusable. */
@@ -138,7 +170,12 @@ object SubtitleRepository {
         lastSequence = c.sequence
         lastSequenceFinal = c.isFinal
 
-        val duration = if (c.isFinal) c.durationMs else PARTIAL_TIMEOUT_MS
+        val duration = when {
+            !c.isFinal -> PARTIAL_TIMEOUT_MS
+            // The line already disappeared from the game screen: show its translation briefly.
+            c.sequence <= clearedUpTo -> LATE_TRANSLATION_MS
+            else -> c.durationMs
+        }
         // SubtitleManager skips the redraw when the text is unchanged.
         SubtitleManager.setSubtitle(Subtitle(c.translatedText, c.originalText, duration))
         stats = stats.copy(shown = stats.shown + 1)
