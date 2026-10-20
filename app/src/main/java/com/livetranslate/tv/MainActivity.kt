@@ -36,7 +36,8 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
     private lateinit var permissionButton: Button
     private lateinit var serverUrlInput: EditText
     private lateinit var connectionText: TextView
-    private lateinit var remotePlayButton: Button
+    private lateinit var translateButton: Button
+    private lateinit var pairButton: Button
     private val settingRows = mutableListOf<ChoiceRow<*>>()
     private var sampleIndex = 0
     /** Audio test waiting on the RECORD_AUDIO permission prompt ("mic" or "playback"). */
@@ -49,7 +50,7 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
         statusText = findViewById(R.id.status_text)
         rowsContainer = findViewById(R.id.rows)
         buildRows()
-        toggleButton.requestFocus()
+        translateButton.requestFocus()
         handleAudioProbeIntent(intent)
     }
 
@@ -150,6 +151,8 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
 
     private fun buildRows() {
         permissionButton = addButton("Grant overlay permission") { requestOverlayPermission() }
+        translateButton = addButton("") { togglePs5Translation() }
+        pairButton = addButton("") { startActivity(Intent(this, PairingActivity::class.java)) }
         toggleButton = addButton("") { toggleSubtitles() }
         addButton("Show next test subtitle") { showNextSample() }
         addButton("Clear subtitle") { SubtitleManager.clearSubtitle() }
@@ -217,16 +220,6 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
             ).apply { bottomMargin = dp(8) },
         )
 
-        remotePlayButton = addButton("") {
-            if (RemotePlayController.isRunning) {
-                SubtitleOverlayService.stopRemotePlay(this)
-            } else if (!SubtitleManager.settings.enabled) {
-                Toast.makeText(this, "Turn subtitles on first", Toast.LENGTH_LONG).show()
-            } else {
-                SubtitleOverlayService.startRemotePlay(this)
-            }
-        }
-
         // Milestone 4 diagnostics.
         addButton("Audio capture test: microphone") { startAudioProbe("mic") }
         addButton("Audio capture test: app playback") { startAudioProbe("playback") }
@@ -254,12 +247,11 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
         val settings = SubtitleManager.settings
         val stats = SubtitleRepository.stats
         val paired = RemotePlayStore(this).load()
-        remotePlayButton.text = when {
-            paired == null -> "Remote Play: not paired with a PS5"
-            RemotePlayController.isRunning -> "Remote Play: ON  (press OK to stop)"
-            else -> "Remote Play: OFF  (press OK to connect to ${paired.nickname})"
-        }
-        remotePlayButton.isEnabled = paired != null
+        val translating = settings.enabled && settings.remotePlayEnabled
+        translateButton.text = if (translating) "PS5 translation: ON  (press OK to stop)"
+        else "PS5 translation: OFF  (press OK to start)"
+        pairButton.text = if (paired == null) "PS5: not paired  (press OK to pair)"
+        else "PS5: paired with ${paired.nickname} at ${paired.host}  (press OK to pair again)"
         val rpLine = RemotePlayController.status.describe()
         connectionText.text = rpLine + "\n" + when {
             !settings.serverEnabled -> "Server: off"
@@ -285,6 +277,36 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
             serverUrlInput.setText(settings.serverUrl) // e.g. changed over ADB
         }
         refreshConnection()
+    }
+
+    /**
+     * One switch for the whole PS5 flow: overlay + Remote Play + OCR + translation backend.
+     * The choice is saved, so it resumes when the app or its process restarts.
+     */
+    private fun togglePs5Translation() {
+        val settings = SubtitleManager.settings
+        if (settings.enabled && settings.remotePlayEnabled) {
+            SubtitleManager.updateSettings { it.copy(remotePlayEnabled = false) }
+            SubtitleOverlayService.stop(this)
+            return
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            requestOverlayPermission()
+            return
+        }
+        if (RemotePlayStore(this).load() == null) {
+            startActivity(Intent(this, PairingActivity::class.java))
+            return
+        }
+        if (settings.serverUrl.isBlank()) {
+            Toast.makeText(this, "No translation server set: showing English only. Add the server URL below.", Toast.LENGTH_LONG).show()
+        }
+        SubtitleManager.updateSettings {
+            it.copy(remotePlayEnabled = true, serverEnabled = it.serverEnabled || it.serverUrl.isNotBlank())
+        }
+        SubtitleOverlayService.start(this)
+        // Also forces a fresh Remote Play start if an earlier attempt had failed.
+        SubtitleOverlayService.startRemotePlay(this)
     }
 
     private fun toggleSubtitles() {

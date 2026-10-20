@@ -45,7 +45,12 @@ class RemotePlayStore(context: Context) {
         prefs.edit().putString(KEY_HOST, host).apply()
     }
 
-    fun clear() = prefs.edit().clear().apply()
+    fun clear() = prefs.edit().remove(KEY_HOST).remove(KEY_NICKNAME).remove(KEY_REGIST_KEY).remove(KEY_RP_KEY).apply()
+
+    /** Last PSN account ID used for pairing, to prefill the pairing screen. */
+    var accountId: String?
+        get() = prefs.getString(KEY_ACCOUNT_ID, null)
+        set(value) = prefs.edit().putString(KEY_ACCOUNT_ID, value).apply()
 
     private fun ByteArray.encode() = Base64.encodeToString(this, Base64.NO_WRAP)
     private fun String.decode() = try { Base64.decode(this, Base64.NO_WRAP) } catch (e: IllegalArgumentException) { null }
@@ -56,5 +61,6 @@ class RemotePlayStore(context: Context) {
         private const val KEY_NICKNAME = "nickname"
         private const val KEY_REGIST_KEY = "regist_key"
         private const val KEY_RP_KEY = "rp_key"
+        private const val KEY_ACCOUNT_ID = "psn_account_id"
     }
 }

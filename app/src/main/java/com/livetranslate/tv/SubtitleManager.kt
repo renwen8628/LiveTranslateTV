@@ -21,7 +21,8 @@ object SubtitleManager {
     private var preferences: SubtitlePreferences? = null
     private val clearRunnable = Runnable { setSubtitle(Subtitle.EMPTY) }
 
-    var subtitle: Subtitle = Subtitle.TEST
+    // Starts empty: the overlay should only show real subtitles ("Show next test subtitle" tests it).
+    var subtitle: Subtitle = Subtitle.EMPTY
         private set
     var settings: SubtitleSettings = SubtitleSettings()
         private set

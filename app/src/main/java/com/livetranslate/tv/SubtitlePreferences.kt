@@ -25,6 +25,7 @@ class SubtitlePreferences(context: Context) {
             bilingual = prefs.getBoolean(KEY_BILINGUAL, d.bilingual),
             serverUrl = prefs.getString(KEY_SERVER_URL, d.serverUrl) ?: d.serverUrl,
             serverEnabled = prefs.getBoolean(KEY_SERVER_ENABLED, d.serverEnabled),
+            remotePlayEnabled = prefs.getBoolean(KEY_REMOTE_PLAY_ENABLED, d.remotePlayEnabled),
         )
     }
 
@@ -40,6 +41,7 @@ class SubtitlePreferences(context: Context) {
             .putBoolean(KEY_BILINGUAL, s.bilingual)
             .putString(KEY_SERVER_URL, s.serverUrl)
             .putBoolean(KEY_SERVER_ENABLED, s.serverEnabled)
+            .putBoolean(KEY_REMOTE_PLAY_ENABLED, s.remotePlayEnabled)
             .apply()
     }
 
@@ -54,5 +56,6 @@ class SubtitlePreferences(context: Context) {
         const val KEY_BILINGUAL = "bilingual"
         const val KEY_SERVER_URL = "server_url"
         const val KEY_SERVER_ENABLED = "server_enabled"
+        const val KEY_REMOTE_PLAY_ENABLED = "remote_play_enabled"
     }
 }

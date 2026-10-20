@@ -43,6 +43,11 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".PairingActivity"
+            android:exported="false"
+            android:windowSoftInputMode="stateHidden"
+            android:screenOrientation="landscape" />
+        <activity
             android:name=".DetailsActivity"
             android:exported="false" />
         <activity

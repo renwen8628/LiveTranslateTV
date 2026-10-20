@@ -36,7 +36,22 @@ Needs NDK `27.1.12297006` and CMake `3.22.1` (Android SDK manager). Only `armeab
 built because the TCL TV runs a 32-bit userspace. The first build also downloads and builds
 OpenSSL, json-c and miniupnpc.
 
-## Pairing (one time)
+## Using it
+
+On the settings screen:
+
+- **PS5: not paired** → opens the pairing screen. It finds the PS5 on the network; enter your
+  PSN account ID (base64, remembered for next time) and the 8-digit code from
+  **PS5 Settings → System → Remote Play → Link Device**.
+- **PS5 translation: ON/OFF** — one switch for everything: subtitle overlay, Remote Play, OCR,
+  and the translation server (if a server URL is set). The choice is saved, so translation
+  resumes whenever the app is opened.
+
+On the TCL TV the firmware blocks automatic service restarts (`[TclAppBoot]:forbid restart
+service`), so if Android kills the app in the background, translation stays off until the
+app is opened again.
+
+## Pairing over ADB (alternative)
 
 1. On the PS5: **Settings → System → Remote Play → Link Device** shows an 8-digit code.
 2. Send it to the app with your PSN account ID (base64):
@@ -51,8 +66,7 @@ kept in private app storage and excluded from backups.
 
 ## Running
 
-Subtitles must be on (the overlay keeps the process alive). Then use the "Remote Play" row on
-the settings screen, or:
+Use the "PS5 translation" switch, or over ADB (this also saves the on/off setting):
 
 ```sh
 adb shell "am startservice -n com.livetranslate.tv/.SubtitleOverlayService -a com.livetranslate.tv.action.RP_START"

@@ -43,6 +43,8 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
     private var overlayView: SubtitleOverlayView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var isForeground = false
+    /** Whether this service started Remote Play + OCR (follows settings.remotePlayEnabled). */
+    private var remotePlayActive = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -102,6 +104,7 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
                         when (result) {
                             is RemotePlayPairing.Result.Success -> {
                                 RemotePlayStore(this).save(result.console)
+                                RemotePlayStore(this).accountId = accountId
                                 Log.i(TAG, "Paired with ${result.console.nickname} at ${result.console.host}")
                                 SubtitleManager.setSubtitle(Subtitle("已配对 ${result.console.nickname}", "Paired with PS5", 5000))
                             }
@@ -116,23 +119,21 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
             }
 
             ACTION_RP_START -> {
-                if (overlayView == null) {
-                    // The overlay keeps this process alive; Remote Play only runs alongside it.
-                    Log.w(TAG, "Start subtitles before Remote Play")
-                    stopSelf(startId)
-                } else {
-                    RemotePlayController.saveDebugFrames = intent.getBooleanExtra(EXTRA_SAVE_FRAMES, false)
-                    // Optional subtitle area override (fractions of the frame), for tuning per game.
-                    val d = OcrRegion()
-                    OcrSubtitlePipeline.region = OcrRegion(
-                        left = intent.getFloatExtra(EXTRA_OCR_LEFT, d.left),
-                        top = intent.getFloatExtra(EXTRA_OCR_TOP, d.top),
-                        right = intent.getFloatExtra(EXTRA_OCR_RIGHT, d.right),
-                        bottom = intent.getFloatExtra(EXTRA_OCR_BOTTOM, d.bottom),
-                    )
-                    RemotePlayController.start(this)
-                    OcrSubtitlePipeline.start()
-                }
+                RemotePlayController.saveDebugFrames = intent.getBooleanExtra(EXTRA_SAVE_FRAMES, false)
+                // Optional subtitle area override (fractions of the frame), for tuning per game.
+                val d = OcrRegion()
+                OcrSubtitlePipeline.region = OcrRegion(
+                    left = intent.getFloatExtra(EXTRA_OCR_LEFT, d.left),
+                    top = intent.getFloatExtra(EXTRA_OCR_TOP, d.top),
+                    right = intent.getFloatExtra(EXTRA_OCR_RIGHT, d.right),
+                    bottom = intent.getFloatExtra(EXTRA_OCR_BOTTOM, d.bottom),
+                )
+                // An explicit start also retries after a failure (e.g. after pairing again).
+                if (remotePlayActive && !RemotePlayController.isRunning) stopRemotePlayNow()
+                SubtitleManager.updateSettings { it.copy(remotePlayEnabled = true) }
+                syncRemotePlay(SubtitleManager.settings)
+                // Runs once the overlay is up; the setting is saved either way.
+                if (overlayView == null) stopSelf(startId)
             }
 
             ACTION_OCR_BENCHMARK -> {
@@ -141,8 +142,8 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
             }
 
             ACTION_RP_STOP -> {
-                OcrSubtitlePipeline.stop()
-                RemotePlayController.stop()
+                SubtitleManager.updateSettings { it.copy(remotePlayEnabled = false) }
+                stopRemotePlayNow()
                 if (overlayView == null) stopSelf(startId)
             }
 
@@ -233,6 +234,7 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
         view.render(subtitle, settings)
         // The connection lives only while the overlay is up; sync() is cheap when nothing changed.
         SubtitleRepository.sync(settings)
+        syncRemotePlay(settings)
 
         val y = verticalOffsetPx(settings)
         if (params.y != y) {
@@ -243,6 +245,29 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
                 Log.e(TAG, "Failed to move overlay", e)
             }
         }
+    }
+
+    /**
+     * Starts or stops Remote Play + OCR to match the setting. Acts only on changes, so a
+     * failed start (e.g. PS5 off) is not retried on every subtitle update; the controller
+     * retries transient failures itself, and ACTION_RP_START forces a fresh start.
+     */
+    private fun syncRemotePlay(settings: SubtitleSettings) {
+        val want = settings.remotePlayEnabled && overlayView != null
+        if (want && !remotePlayActive) {
+            if (RemotePlayStore(this).load() == null) return // not paired yet; the settings screen says so
+            remotePlayActive = true
+            RemotePlayController.start(this)
+            OcrSubtitlePipeline.start()
+        } else if (!want && remotePlayActive) {
+            stopRemotePlayNow()
+        }
+    }
+
+    private fun stopRemotePlayNow() {
+        remotePlayActive = false
+        OcrSubtitlePipeline.stop()
+        RemotePlayController.stop()
     }
 
     private fun verticalOffsetPx(settings: SubtitleSettings): Int {
@@ -258,8 +283,7 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
     private fun removeOverlay() {
         SubtitleManager.removeListener(this)
         SubtitleRepository.disconnect()
-        OcrSubtitlePipeline.stop()
-        RemotePlayController.stop()
+        stopRemotePlayNow()
         overlayView?.let { view ->
             try {
                 windowManager.removeViewImmediate(view)
