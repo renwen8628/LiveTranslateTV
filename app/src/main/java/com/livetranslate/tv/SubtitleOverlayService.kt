@@ -17,6 +17,8 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.livetranslate.tv.ocr.OcrRegion
+import com.livetranslate.tv.ocr.OcrSubtitlePipeline
 import com.livetranslate.tv.remoteplay.RemotePlayController
 import com.livetranslate.tv.remoteplay.RemotePlayPairing
 import com.livetranslate.tv.remoteplay.RemotePlayStore
@@ -120,11 +122,26 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
                     stopSelf(startId)
                 } else {
                     RemotePlayController.saveDebugFrames = intent.getBooleanExtra(EXTRA_SAVE_FRAMES, false)
+                    // Optional subtitle area override (fractions of the frame), for tuning per game.
+                    val d = OcrRegion()
+                    OcrSubtitlePipeline.region = OcrRegion(
+                        left = intent.getFloatExtra(EXTRA_OCR_LEFT, d.left),
+                        top = intent.getFloatExtra(EXTRA_OCR_TOP, d.top),
+                        right = intent.getFloatExtra(EXTRA_OCR_RIGHT, d.right),
+                        bottom = intent.getFloatExtra(EXTRA_OCR_BOTTOM, d.bottom),
+                    )
                     RemotePlayController.start(this)
+                    OcrSubtitlePipeline.start()
                 }
             }
 
+            ACTION_OCR_BENCHMARK -> {
+                Thread({ com.livetranslate.tv.ocr.OcrBenchmark.run() }, "OcrBench").start()
+                if (overlayView == null) stopSelf(startId)
+            }
+
             ACTION_RP_STOP -> {
+                OcrSubtitlePipeline.stop()
                 RemotePlayController.stop()
                 if (overlayView == null) stopSelf(startId)
             }
@@ -241,6 +258,7 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
     private fun removeOverlay() {
         SubtitleManager.removeListener(this)
         SubtitleRepository.disconnect()
+        OcrSubtitlePipeline.stop()
         RemotePlayController.stop()
         overlayView?.let { view ->
             try {
@@ -307,6 +325,7 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
         const val ACTION_RP_PAIR = "com.livetranslate.tv.action.RP_PAIR"
         const val ACTION_RP_START = "com.livetranslate.tv.action.RP_START"
         const val ACTION_RP_STOP = "com.livetranslate.tv.action.RP_STOP"
+        const val ACTION_OCR_BENCHMARK = "com.livetranslate.tv.action.OCR_BENCHMARK"
 
         const val EXTRA_TRANSLATED = "translated"
         const val EXTRA_ORIGINAL = "original"
@@ -317,6 +336,10 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
         const val EXTRA_PIN = "pin"
         const val EXTRA_HOST = "host"
         const val EXTRA_SAVE_FRAMES = "save_frames"
+        const val EXTRA_OCR_LEFT = "ocr_left"
+        const val EXTRA_OCR_TOP = "ocr_top"
+        const val EXTRA_OCR_RIGHT = "ocr_right"
+        const val EXTRA_OCR_BOTTOM = "ocr_bottom"
 
         fun startRemotePlay(context: Context) {
             context.startService(Intent(context, SubtitleOverlayService::class.java).setAction(ACTION_RP_START))

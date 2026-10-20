@@ -59,4 +59,8 @@ dependencies {
     implementation(libs.androidx.leanback)
     implementation(libs.glide)
     implementation(libs.okhttp)
+    // On-device OCR with the model bundled in the APK (no Play Services download needed).
+    implementation(libs.mlkit.text.recognition)
+
+    testImplementation(libs.junit)
 }

@@ -39,7 +39,6 @@ object RemotePlayController {
     private const val TAG = "RemotePlay"
     private const val WIDTH = 1280
     private const val HEIGHT = 720
-    private const val FRAME_INTERVAL_MS = 1000L
     private const val SAVED_FRAMES_KEPT = 5
 
     sealed class Status {
@@ -47,12 +46,14 @@ object RemotePlayController {
         data class Connecting(val host: String) : Status()
         data class Streaming(val host: String, val decodedFps: Int) : Status()
         data class Failed(val message: String) : Status()
+        data class Retrying(val message: String, val delaySeconds: Long) : Status()
 
         fun describe() = when (this) {
             Idle -> "Remote Play off"
             is Connecting -> "Remote Play: connecting to $host…"
             is Streaming -> "Remote Play: receiving video from $host ($decodedFps fps)"
             is Failed -> "Remote Play stopped: $message"
+            is Retrying -> "Remote Play: $message. Retrying in ${delaySeconds}s"
         }
     }
 
@@ -63,7 +64,11 @@ object RemotePlayController {
     @Volatile
     var frameListener: ((LumaFrame) -> Unit)? = null
 
-    /** Save one frame per second to files/rp_frames (for testing). */
+    /** Minimum time between frames handed to [frameListener]. */
+    @Volatile
+    var frameIntervalMs = 1000L
+
+    /** Save sampled frames to files/rp_frames (for testing). */
     @Volatile
     var saveDebugFrames = false
 
@@ -76,6 +81,12 @@ object RemotePlayController {
     private var reader: ImageReader? = null
     private var frameThread: HandlerThread? = null
     private var framesDir: File? = null
+
+    // Whether the user wants Remote Play on; drives automatic retries.
+    private var wanted = false
+    private var appContext: Context? = null
+    private var retryAttempt = 0
+    private val retryRunnable = Runnable { if (wanted && session == null) startSession() }
 
     // Frame thread state.
     private var lastDeliveredMs = 0L
@@ -91,11 +102,28 @@ object RemotePlayController {
         statusListeners.remove(listener)
     }
 
-    val isRunning get() = session != null
+    /** True while Remote Play is switched on (connected, connecting, or waiting to retry). */
+    val isRunning get() = wanted
 
     fun start(context: Context) {
+        if (wanted) return
+        wanted = true
+        appContext = context.applicationContext
+        retryAttempt = 0
+        startSession()
+    }
+
+    fun stop() {
+        wanted = false
+        mainHandler.removeCallbacks(retryRunnable)
+        endSession(Status.Idle)
+    }
+
+    private fun startSession() {
         if (session != null) return
+        val context = appContext ?: return
         val console = RemotePlayStore(context).load() ?: run {
+            wanted = false
             setStatus(Status.Failed("not paired with a PS5"))
             return
         }
@@ -112,7 +140,10 @@ object RemotePlayController {
             Session(ConnectInfo(true, console.host, console.registKey, console.rpKey, profile), null, false)
         } catch (e: Exception) {
             Log.e(TAG, "Session create failed", e)
-            releaseAfterStop()
+            release(imageReader, thread)
+            reader = null
+            frameThread = null
+            wanted = false
             setStatus(Status.Failed("could not create session: ${e.message}"))
             return
         }
@@ -123,17 +154,23 @@ object RemotePlayController {
         val err = newSession.start()
         if (!err.isSuccess) {
             Log.e(TAG, "Session start failed: $err")
-            stop(Status.Failed("could not start: $err"))
+            wanted = false
+            endSession(Status.Failed("could not start: $err"))
         }
     }
 
-    fun stop(finalStatus: Status = Status.Idle) {
+    private fun endSession(finalStatus: Status) {
         val s = session ?: run {
             setStatus(finalStatus)
             return
         }
         session = null
         s.eventCallback = null
+        // Release this session's reader/thread only (a retry may already have new ones).
+        val oldReader = reader
+        val oldThread = frameThread
+        reader = null
+        frameThread = null
         setStatus(finalStatus)
         // stop() + dispose() (which joins the native threads) can block; keep it off the main thread.
         Thread({
@@ -144,15 +181,30 @@ object RemotePlayController {
             } catch (e: Exception) {
                 Log.w(TAG, "Session shutdown error", e)
             }
-            mainHandler.post { releaseAfterStop() }
+            mainHandler.post { release(oldReader, oldThread) }
         }, "RemotePlayStop").start()
     }
 
-    private fun releaseAfterStop() {
-        reader?.close()
-        reader = null
-        frameThread?.quitSafely()
-        frameThread = null
+    private fun release(imageReader: ImageReader?, thread: HandlerThread?) {
+        imageReader?.close()
+        thread?.quitSafely()
+    }
+
+    /** Quit reasons worth retrying: console busy (e.g. a previous session not yet released) or connection dropped. */
+    private val RETRYABLE_QUIT_REASONS = setOf(
+        4,  // SESSION_REQUEST_RP_IN_USE
+        5,  // SESSION_REQUEST_RP_CRASH
+        9,  // CTRL_CONNECT_FAILED
+        10, // CTRL_CONNECTION_REFUSED
+        11, // STREAM_CONNECTION_REMOTE_DISCONNECTED
+    )
+
+    private fun scheduleRetry(reason: String) {
+        retryAttempt++
+        val delaySeconds = minOf(30L, 5L shl minOf(retryAttempt - 1, 3))
+        endSession(Status.Retrying(reason, delaySeconds))
+        mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.postDelayed(retryRunnable, delaySeconds * 1000)
     }
 
     private fun onSessionEvent(source: Session, host: String, event: Any) {
@@ -160,15 +212,24 @@ object RemotePlayController {
         when (event) {
             is ConnectedEvent -> {
                 Log.i(TAG, "Connected to $host")
+                retryAttempt = 0
                 setStatus(Status.Streaming(host, 0))
             }
             is LoginPinRequestEvent -> {
                 // Only happens if the PS5 has a Remote Play login PIN set; not supported yet.
-                stop(Status.Failed("the PS5 asks for a login PIN (not supported yet)"))
+                wanted = false
+                endSession(Status.Failed("the PS5 asks for a login PIN (not supported yet)"))
             }
             is QuitEvent -> {
-                Log.i(TAG, "Session quit: ${event.reason} ${event.reasonString.orEmpty()}")
-                stop(if (event.reason.isError) Status.Failed(event.reasonString ?: event.reason.toString()) else Status.Idle)
+                Log.i(TAG, "Session quit: ${event.reason} (${event.reason.value}) ${event.reasonString.orEmpty()}")
+                val message = event.reasonString ?: event.reason.toString()
+                when {
+                    wanted && event.reason.value in RETRYABLE_QUIT_REASONS -> scheduleRetry(message)
+                    else -> {
+                        wanted = false
+                        endSession(if (event.reason.isError) Status.Failed(message) else Status.Idle)
+                    }
+                }
             }
             is RumbleEvent -> Unit
         }
@@ -187,7 +248,7 @@ object RemotePlayController {
             countFrame(now)
             val listener = frameListener
             val save = saveDebugFrames
-            if ((listener == null && !save) || now - lastDeliveredMs < FRAME_INTERVAL_MS) return
+            if ((listener == null && !save) || now - lastDeliveredMs < frameIntervalMs) return
             lastDeliveredMs = now
 
             val plane = img.planes[0]
