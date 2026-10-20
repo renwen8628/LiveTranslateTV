@@ -6,9 +6,12 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.util.TypedValue
+import android.text.InputType
 import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -19,12 +22,14 @@ import androidx.fragment.app.FragmentActivity
  * Settings screen and permission handling. The overlay itself lives in
  * [SubtitleOverlayService]; this activity only starts/stops it and edits settings.
  */
-class MainActivity : FragmentActivity(), SubtitleManager.Listener {
+class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepository.Listener {
 
     private lateinit var statusText: TextView
     private lateinit var rowsContainer: LinearLayout
     private lateinit var toggleButton: Button
     private lateinit var permissionButton: Button
+    private lateinit var serverUrlInput: EditText
+    private lateinit var connectionText: TextView
     private val settingRows = mutableListOf<ChoiceRow<*>>()
     private var sampleIndex = 0
 
@@ -41,6 +46,7 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener {
     override fun onStart() {
         super.onStart()
         SubtitleManager.addListener(this)
+        SubtitleRepository.addListener(this)
     }
 
     override fun onResume() {
@@ -57,10 +63,14 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener {
 
     override fun onStop() {
         SubtitleManager.removeListener(this)
+        SubtitleRepository.removeListener(this)
         super.onStop()
     }
 
     override fun onSubtitleStateChanged(subtitle: Subtitle, settings: SubtitleSettings) = refresh()
+
+    override fun onConnectionChanged(status: ConnectionStatus, stats: SubtitleRepository.Stats) =
+        refreshConnection()
 
     private fun buildRows() {
         permissionButton = addButton("Grant overlay permission") { requestOverlayPermission() }
@@ -101,7 +111,65 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener {
             "Bilingual subtitles", listOf(true, false), { if (it) "On" else "Off" },
             get = { it.bilingual }, set = { st, v -> st.copy(bilingual = v) },
         )
+        settingRows += ChoiceRow(
+            "Server connection", listOf(true, false), { if (it) "On" else "Off" },
+            get = { it.serverEnabled }, set = { st, v -> st.copy(serverEnabled = v) },
+        )
         settingRows.forEach { rowsContainer.addView(it.button) }
+
+        serverUrlInput = EditText(this).apply {
+            hint = "Server URL, e.g. ws://192.168.1.10:8765"
+            setText(SubtitleManager.settings.serverUrl)
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setBackgroundResource(R.drawable.setting_row_background)
+            setTextColor(ContextCompat.getColorStateList(this@MainActivity, R.color.setting_row_text))
+            setHintTextColor(0xFF90A4AE.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_DONE) { saveServerUrl(); false } else false
+            }
+            setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveServerUrl() }
+        }
+        rowsContainer.addView(
+            serverUrlInput,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = dp(8) },
+        )
+
+        // Shown at the top, under the main status line, so it is always on screen.
+        connectionText = TextView(this).apply {
+            setTextColor(0xFFB0BEC5.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setPadding(0, 0, 0, dp(16))
+        }
+        rowsContainer.addView(connectionText, 0)
+    }
+
+    private fun saveServerUrl() {
+        val raw = serverUrlInput.text.toString().trim()
+        if (raw == SubtitleManager.settings.serverUrl) return
+        if (raw.isNotEmpty() && SubtitleRepository.normalizeUrl(raw) == null) {
+            Toast.makeText(this, "URL must start with ws:// or wss://", Toast.LENGTH_LONG).show()
+            return
+        }
+        SubtitleManager.updateSettings { it.copy(serverUrl = raw) }
+    }
+
+    private fun refreshConnection() {
+        val settings = SubtitleManager.settings
+        val stats = SubtitleRepository.stats
+        connectionText.text = when {
+            !settings.serverEnabled -> "Server: off"
+            !settings.enabled -> "Server: connects when subtitles are on"
+            else -> "Server: ${SubtitleRepository.status.describe()}\n" +
+                "Messages: ${stats.received} received · ${stats.shown} shown · " +
+                "${stats.droppedOutdated} outdated ignored"
+        }
     }
 
     private fun refresh() {
@@ -115,6 +183,10 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener {
             else -> "Subtitles are stopped."
         }
         settingRows.forEach { it.refresh(settings) }
+        if (!serverUrlInput.hasFocus() && serverUrlInput.text.toString() != settings.serverUrl) {
+            serverUrlInput.setText(settings.serverUrl) // e.g. changed over ADB
+        }
+        refreshConnection()
     }
 
     private fun toggleSubtitles() {

@@ -60,6 +60,9 @@ data class SubtitleSettings(
     val sourceLanguage: String = "en",
     val targetLanguage: String = "zh-CN",
     val bilingual: Boolean = true,
+    /** ws:// or wss:// address of the subtitle backend. Never holds credentials. */
+    val serverUrl: String = "",
+    val serverEnabled: Boolean = false,
 ) {
     companion object {
         val FONT_SIZES = listOf(20, 24, 28, 32, 36, 42, 48)

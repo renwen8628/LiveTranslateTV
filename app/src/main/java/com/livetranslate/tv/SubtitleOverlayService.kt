@@ -73,6 +73,16 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
                 if (overlayView == null) stopSelf(startId)
             }
 
+            ACTION_CONFIGURE_SERVER -> {
+                // Typing a URL with a TV remote is slow; this lets it be set over ADB.
+                val url = intent.getStringExtra(EXTRA_SERVER_URL)
+                val enabled = intent.getBooleanExtra(EXTRA_SERVER_ENABLED, true)
+                SubtitleManager.updateSettings { s ->
+                    s.copy(serverUrl = url?.trim() ?: s.serverUrl, serverEnabled = enabled)
+                }
+                if (overlayView == null) stopSelf(startId)
+            }
+
             ACTION_CLEAR -> {
                 SubtitleManager.clearSubtitle()
                 if (overlayView == null) stopSelf(startId)
@@ -158,6 +168,8 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
         val view = overlayView ?: return
         val params = layoutParams ?: return
         view.render(subtitle, settings)
+        // The connection lives only while the overlay is up; sync() is cheap when nothing changed.
+        SubtitleRepository.sync(settings)
 
         val y = verticalOffsetPx(settings)
         if (params.y != y) {
@@ -182,6 +194,7 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
 
     private fun removeOverlay() {
         SubtitleManager.removeListener(this)
+        SubtitleRepository.disconnect()
         overlayView?.let { view ->
             try {
                 windowManager.removeViewImmediate(view)
@@ -243,10 +256,13 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
         const val ACTION_STOP = "com.livetranslate.tv.action.STOP"
         const val ACTION_SHOW_TEXT = "com.livetranslate.tv.action.SHOW_TEXT"
         const val ACTION_CLEAR = "com.livetranslate.tv.action.CLEAR"
+        const val ACTION_CONFIGURE_SERVER = "com.livetranslate.tv.action.CONFIGURE_SERVER"
 
         const val EXTRA_TRANSLATED = "translated"
         const val EXTRA_ORIGINAL = "original"
         const val EXTRA_DURATION_MS = "duration_ms"
+        const val EXTRA_SERVER_URL = "server_url"
+        const val EXTRA_SERVER_ENABLED = "server_enabled"
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

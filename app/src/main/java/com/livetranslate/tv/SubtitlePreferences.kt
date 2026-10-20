@@ -23,6 +23,8 @@ class SubtitlePreferences(context: Context) {
             sourceLanguage = prefs.getString(KEY_SOURCE_LANG, d.sourceLanguage) ?: d.sourceLanguage,
             targetLanguage = prefs.getString(KEY_TARGET_LANG, d.targetLanguage) ?: d.targetLanguage,
             bilingual = prefs.getBoolean(KEY_BILINGUAL, d.bilingual),
+            serverUrl = prefs.getString(KEY_SERVER_URL, d.serverUrl) ?: d.serverUrl,
+            serverEnabled = prefs.getBoolean(KEY_SERVER_ENABLED, d.serverEnabled),
         )
     }
 
@@ -36,6 +38,8 @@ class SubtitlePreferences(context: Context) {
             .putString(KEY_SOURCE_LANG, s.sourceLanguage)
             .putString(KEY_TARGET_LANG, s.targetLanguage)
             .putBoolean(KEY_BILINGUAL, s.bilingual)
+            .putString(KEY_SERVER_URL, s.serverUrl)
+            .putBoolean(KEY_SERVER_ENABLED, s.serverEnabled)
             .apply()
     }
 
@@ -48,5 +52,7 @@ class SubtitlePreferences(context: Context) {
         const val KEY_SOURCE_LANG = "source_language"
         const val KEY_TARGET_LANG = "target_language"
         const val KEY_BILINGUAL = "bilingual"
+        const val KEY_SERVER_URL = "server_url"
+        const val KEY_SERVER_ENABLED = "server_enabled"
     }
 }
