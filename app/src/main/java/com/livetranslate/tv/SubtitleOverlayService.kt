@@ -17,6 +17,9 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.livetranslate.tv.remoteplay.RemotePlayController
+import com.livetranslate.tv.remoteplay.RemotePlayPairing
+import com.livetranslate.tv.remoteplay.RemotePlayStore
 
 /**
  * Owns the subtitle overlay window so it survives MainActivity leaving the foreground
@@ -84,6 +87,45 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
                 SubtitleManager.updateSettings { s ->
                     s.copy(serverUrl = url?.trim() ?: s.serverUrl, serverEnabled = enabled)
                 }
+                if (overlayView == null) stopSelf(startId)
+            }
+
+            ACTION_RP_PAIR -> {
+                val accountId = intent.getStringExtra(EXTRA_PSN_ACCOUNT_ID).orEmpty()
+                val pin = intent.getStringExtra(EXTRA_PIN).orEmpty()
+                val host = intent.getStringExtra(EXTRA_HOST)
+                Thread({
+                    val result = RemotePlayPairing.pair(accountId, pin, host)
+                    android.os.Handler(mainLooper).post {
+                        when (result) {
+                            is RemotePlayPairing.Result.Success -> {
+                                RemotePlayStore(this).save(result.console)
+                                Log.i(TAG, "Paired with ${result.console.nickname} at ${result.console.host}")
+                                SubtitleManager.setSubtitle(Subtitle("已配对 ${result.console.nickname}", "Paired with PS5", 5000))
+                            }
+                            is RemotePlayPairing.Result.Failure -> {
+                                Log.w(TAG, "Pairing failed: ${result.message}")
+                                SubtitleManager.setSubtitle(Subtitle("配对失败", "Pairing failed: ${result.message}", 8000))
+                            }
+                        }
+                        if (overlayView == null) stopSelf(startId)
+                    }
+                }, "RemotePlayPair").start()
+            }
+
+            ACTION_RP_START -> {
+                if (overlayView == null) {
+                    // The overlay keeps this process alive; Remote Play only runs alongside it.
+                    Log.w(TAG, "Start subtitles before Remote Play")
+                    stopSelf(startId)
+                } else {
+                    RemotePlayController.saveDebugFrames = intent.getBooleanExtra(EXTRA_SAVE_FRAMES, false)
+                    RemotePlayController.start(this)
+                }
+            }
+
+            ACTION_RP_STOP -> {
+                RemotePlayController.stop()
                 if (overlayView == null) stopSelf(startId)
             }
 
@@ -199,6 +241,7 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
     private fun removeOverlay() {
         SubtitleManager.removeListener(this)
         SubtitleRepository.disconnect()
+        RemotePlayController.stop()
         overlayView?.let { view ->
             try {
                 windowManager.removeViewImmediate(view)
@@ -261,12 +304,27 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
         const val ACTION_SHOW_TEXT = "com.livetranslate.tv.action.SHOW_TEXT"
         const val ACTION_CLEAR = "com.livetranslate.tv.action.CLEAR"
         const val ACTION_CONFIGURE_SERVER = "com.livetranslate.tv.action.CONFIGURE_SERVER"
+        const val ACTION_RP_PAIR = "com.livetranslate.tv.action.RP_PAIR"
+        const val ACTION_RP_START = "com.livetranslate.tv.action.RP_START"
+        const val ACTION_RP_STOP = "com.livetranslate.tv.action.RP_STOP"
 
         const val EXTRA_TRANSLATED = "translated"
         const val EXTRA_ORIGINAL = "original"
         const val EXTRA_DURATION_MS = "duration_ms"
         const val EXTRA_SERVER_URL = "server_url"
         const val EXTRA_SERVER_ENABLED = "server_enabled"
+        const val EXTRA_PSN_ACCOUNT_ID = "psn_account_id"
+        const val EXTRA_PIN = "pin"
+        const val EXTRA_HOST = "host"
+        const val EXTRA_SAVE_FRAMES = "save_frames"
+
+        fun startRemotePlay(context: Context) {
+            context.startService(Intent(context, SubtitleOverlayService::class.java).setAction(ACTION_RP_START))
+        }
+
+        fun stopRemotePlay(context: Context) {
+            context.startService(Intent(context, SubtitleOverlayService::class.java).setAction(ACTION_RP_STOP))
+        }
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

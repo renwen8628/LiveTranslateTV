@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and lower. Remote Play pairing keys stay on this device. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="remote_play.xml" />
+</full-backup-content>

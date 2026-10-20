@@ -6,6 +6,8 @@ plugins {
 android {
     namespace = "com.livetranslate.tv"
     compileSdk = 36
+    // Remote Play native code (chiaki-ng). See tools/setup-native-build.sh.
+    ndkVersion = "27.1.12297006"
 
     defaultConfig {
         applicationId = "com.livetranslate.tv"
@@ -14,6 +16,23 @@ android {
         versionCode = 1
         versionName = "1.0"
 
+        ndk {
+            // The target TCL TV runs a 32-bit-only userspace.
+            abiFilters += "armeabi-v7a"
+        }
+        externalNativeBuild {
+            cmake {
+                // chiaki-ng generates protobuf code with Python + protobuf (from .venv-nanopb).
+                arguments += "-DPYTHON_EXECUTABLE=${rootProject.file(".venv-nanopb/bin/python").absolutePath}"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {

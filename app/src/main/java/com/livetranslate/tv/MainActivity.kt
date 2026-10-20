@@ -20,12 +20,15 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.livetranslate.tv.remoteplay.RemotePlayController
+import com.livetranslate.tv.remoteplay.RemotePlayStore
 
 /**
  * Settings screen and permission handling. The overlay itself lives in
  * [SubtitleOverlayService]; this activity only starts/stops it and edits settings.
  */
-class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepository.Listener {
+class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepository.Listener,
+    RemotePlayController.StatusListener {
 
     private lateinit var statusText: TextView
     private lateinit var rowsContainer: LinearLayout
@@ -33,6 +36,7 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
     private lateinit var permissionButton: Button
     private lateinit var serverUrlInput: EditText
     private lateinit var connectionText: TextView
+    private lateinit var remotePlayButton: Button
     private val settingRows = mutableListOf<ChoiceRow<*>>()
     private var sampleIndex = 0
     /** Audio test waiting on the RECORD_AUDIO permission prompt ("mic" or "playback"). */
@@ -115,6 +119,7 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
         super.onStart()
         SubtitleManager.addListener(this)
         SubtitleRepository.addListener(this)
+        RemotePlayController.addListener(this)
     }
 
     override fun onResume() {
@@ -132,6 +137,7 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
     override fun onStop() {
         SubtitleManager.removeListener(this)
         SubtitleRepository.removeListener(this)
+        RemotePlayController.removeListener(this)
         super.onStop()
     }
 
@@ -139,6 +145,8 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
 
     override fun onConnectionChanged(status: ConnectionStatus, stats: SubtitleRepository.Stats) =
         refreshConnection()
+
+    override fun onStatus(status: RemotePlayController.Status) = refreshConnection()
 
     private fun buildRows() {
         permissionButton = addButton("Grant overlay permission") { requestOverlayPermission() }
@@ -209,6 +217,16 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
             ).apply { bottomMargin = dp(8) },
         )
 
+        remotePlayButton = addButton("") {
+            if (RemotePlayController.isRunning) {
+                SubtitleOverlayService.stopRemotePlay(this)
+            } else if (!SubtitleManager.settings.enabled) {
+                Toast.makeText(this, "Turn subtitles on first", Toast.LENGTH_LONG).show()
+            } else {
+                SubtitleOverlayService.startRemotePlay(this)
+            }
+        }
+
         // Milestone 4 diagnostics.
         addButton("Audio capture test: microphone") { startAudioProbe("mic") }
         addButton("Audio capture test: app playback") { startAudioProbe("playback") }
@@ -235,7 +253,15 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
     private fun refreshConnection() {
         val settings = SubtitleManager.settings
         val stats = SubtitleRepository.stats
-        connectionText.text = when {
+        val paired = RemotePlayStore(this).load()
+        remotePlayButton.text = when {
+            paired == null -> "Remote Play: not paired with a PS5"
+            RemotePlayController.isRunning -> "Remote Play: ON  (press OK to stop)"
+            else -> "Remote Play: OFF  (press OK to connect to ${paired.nickname})"
+        }
+        remotePlayButton.isEnabled = paired != null
+        val rpLine = RemotePlayController.status.describe()
+        connectionText.text = rpLine + "\n" + when {
             !settings.serverEnabled -> "Server: off"
             !settings.enabled -> "Server: connects when subtitles are on"
             else -> "Server: ${SubtitleRepository.status.describe()}\n" +
