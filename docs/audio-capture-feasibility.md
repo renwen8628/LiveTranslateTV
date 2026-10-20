@@ -11,14 +11,11 @@ PS5 is on HDMI 1 (`com.tcl.tvinput/.TvPassThroughService/HW15`, CEC "PlayStation
 
 | Question | Answer | Evidence level |
 |---|---|---|
-| Can a normal app capture HDMI (PS5) audio on this TV? | **No** | Verified* |
+| Can a normal app capture HDMI (PS5) audio on this TV? | **No** | Verified |
 | Can it record the TV's built-in microphone? | Yes, but **only while the app is on screen** | Verified |
 | Can it record the mic while HDMI is showing? | **No — Android silences it** | Verified |
 | Can it capture audio of other Google TV apps (YouTube etc.)? | Probably, via `AudioPlaybackCapture` | Mechanism verified with our own audio; third-party apps not tested |
 | Can the app hold a foreground service? | **Not reliably** — TCL firmware blocks it for this sideloaded app | Verified (logs) |
-
-\* Verified as far as possible without listening in the room: all three independent signals agree (below). Re-running the
-playback test while PS5 audio is clearly audible would close the remaining gap.
 
 ## Findings
 
@@ -34,8 +31,11 @@ playback test while PS5 audio is clearly audible would close the remaining gap.
   through Android's software mixer, which is the only thing `AudioPlaybackCapture` can tap.
 - **Measured:** with screen-capture consent granted and the TV on the PS5 input,
   `AudioPlaybackCapture` (usages MEDIA, GAME, UNKNOWN) returned **8 s of digital silence**
-  (`-inf dBFS`). In the same session it captured our own 1 kHz test tone cleanly at −15 dBFS,
-  so the capture path itself worked.
+  (`-inf dBFS`, every sample zero). In the same session it captured our own 1 kHz test tone
+  cleanly at −15 dBFS, so the capture path itself worked.
+- **Confirmed with audible PS5 audio:** the test was repeated while the PS5 was playing sound
+  that the user heard from the TV speakers for the whole recording. The result was the
+  same: all-zero capture of the PS5 section, clean capture of the test tone.
 
 Conclusion: on this TV, PS5/HDMI audio can only be heard acoustically, not captured digitally
 by an app.
