@@ -11,8 +11,8 @@ import com.livetranslate.tv.remoteplay.RemotePlayController
 /**
  * Remote Play frames -> OCR of the subtitle area -> stabilized subtitle lines -> overlay.
  *
- * When the translation backend is connected, each line is sent to it and the English is
- * shown until the translation arrives (via SubtitleRepository). Without a backend, the
+ * When the translation backend is connected, each line is sent to it and the previous
+ * translation stays up until the new one arrives (via SubtitleRepository). Without a backend, the
  * recognized English is shown on its own.
  *
  * Main thread only.
@@ -109,10 +109,8 @@ object OcrSubtitlePipeline {
     private fun show(text: String) {
         if (SubtitleRepository.isConnected) {
             val sequence = ++requestSequence
-            SubtitleRepository.noteLocalLine(sequence)
+            SubtitleRepository.noteLocalLine(sequence, text)
             SubtitleRepository.sendSource(sequence, text)
-            // English (as the original line) until the translation replaces it.
-            SubtitleManager.setSubtitle(Subtitle(translatedText = "", originalText = text))
         } else {
             SubtitleManager.setSubtitle(Subtitle(translatedText = text, originalText = null))
         }

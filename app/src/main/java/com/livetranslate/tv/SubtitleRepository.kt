@@ -37,8 +37,11 @@ object SubtitleRepository {
     var stats = Stats()
         private set
 
+    /** Newest caption shown. Older replies are outdated; newer ones replace it. */
     private var lastSequence = -1L
     private var lastSequenceFinal = false
+    /** Newest line read on this TV (OCR) and sent for translation. */
+    private var newestLocalSequence = -1L
     /** Lines up to this sequence already left the screen; their late translations show briefly. */
     private var clearedUpTo = -1L
     private const val LATE_TRANSLATION_MS = 3_000L
@@ -56,6 +59,7 @@ object SubtitleRepository {
                 socket = ws
                 lastSequence = -1L
                 lastSequenceFinal = false
+                newestLocalSequence = -1L
                 clearedUpTo = -1L
                 sentHello = null
                 sendHello()
@@ -118,17 +122,23 @@ object SubtitleRepository {
         sendHello()
     }
 
-    /** A line with this sequence is now on screen locally; replies for older lines are outdated. */
-    fun noteLocalLine(sequence: Long) {
-        if (sequence > lastSequence) {
-            lastSequence = sequence
-            lastSequenceFinal = false
+    /**
+     * A new line with this sequence appeared in the game and was sent for translation.
+     * The translation on screen stays until this line's translation replaces it, so each
+     * translation is up for about as long as its line was in the game (shifted by the
+     * translation delay) instead of vanishing the moment the next line is read.
+     */
+    fun noteLocalLine(sequence: Long, text: String) {
+        if (sequence > newestLocalSequence) newestLocalSequence = sequence
+        if (SubtitleManager.subtitle.translatedText.isBlank()) {
+            // Nothing translated on screen: show the English (bilingual mode) until it arrives.
+            SubtitleManager.setSubtitle(Subtitle(translatedText = "", originalText = text))
         }
     }
 
     /** The current local line left the screen. */
     fun noteLocalClear() {
-        clearedUpTo = lastSequence
+        clearedUpTo = newestLocalSequence
     }
 
     /** Accepts ws:// or wss:// URLs; returns null if unusable. */
