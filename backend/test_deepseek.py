@@ -37,7 +37,7 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_translation_and_request(self):
         result = await self.translator.translate(
-            "Park: G0!", [ContextLine("Wait!", "等等！")], "Call of Duty",
+            "Park: G0!", [ContextLine("Wait!", "等等！")], "Call of Duty", {"Price": "普莱斯"},
         )
         self.assertEqual(result.source, "Park: Go!")
         self.assertEqual(result.translation, "Park：快走！")
@@ -49,8 +49,25 @@ class DeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["thinking"], {"type": "disabled"})
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertIn("JSON", body["messages"][0]["content"])
-        for text in ("Call of Duty", "Wait!", "等等！", "Park: G0!"):
+        self.assertIn('The game is "Call of Duty"', body["messages"][0]["content"])
+        for text in ("Price = 普莱斯", "Wait!", "等等！", "Park: G0!"):
             self.assertIn(text, body["messages"][1]["content"])
+
+    async def test_terms_are_parsed_leniently(self):
+        self.payload["choices"][0]["message"]["content"] = json.dumps({
+            "source": "Price: Go to Verdansk.", "translation": "Price：去弗丹斯克。",
+            "terms": [{"en": "Verdansk", "zh": "弗丹斯克"}, {"en": "", "zh": "x"}, "junk", {"en": "A"}],
+        })
+        result = await self.translator.translate("Price: Go to Verdansk.", [], None)
+        self.assertEqual(result.terms, {"Verdansk": "弗丹斯克"})
+        self.payload["choices"][0]["message"]["content"] = '{"source":"Go!","translation":"走！"}'
+        self.assertEqual((await self.translator.translate("Go!", [], None)).terms, {})
+
+    async def test_no_game_section_without_game(self):
+        await self.translator.translate("Go!", [], None)
+        body = json.loads(self.requests[0].content)
+        self.assertNotIn("The game is", body["messages"][0]["content"])
+        self.assertNotIn("Glossary for this game", body["messages"][1]["content"])
 
     async def test_empty_and_truncated_answers_are_skipped(self):
         for choices in (

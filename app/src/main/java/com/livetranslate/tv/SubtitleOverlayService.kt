@@ -20,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.livetranslate.tv.ocr.OcrRegion
 import com.livetranslate.tv.ocr.OcrSubtitlePipeline
+import com.livetranslate.tv.remoteplay.GameTitleWatcher
 import com.livetranslate.tv.remoteplay.RemotePlayController
 import com.livetranslate.tv.remoteplay.RemotePlayPairing
 import com.livetranslate.tv.remoteplay.RemotePlayStore
@@ -266,10 +267,11 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
     private fun syncRemotePlay(settings: SubtitleSettings) {
         val want = settings.remotePlayEnabled && overlayView != null
         if (want && !remotePlayActive) {
-            if (RemotePlayStore(this).load() == null) return // not paired yet; the settings screen says so
+            val console = RemotePlayStore(this).load() ?: return // not paired yet; the settings screen says so
             remotePlayActive = true
             RemotePlayController.start(this)
             OcrSubtitlePipeline.start()
+            GameTitleWatcher.start(console.host, SubtitleRepository::setGame)
         } else if (!want && remotePlayActive) {
             stopRemotePlayNow()
         }
@@ -277,6 +279,7 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
 
     private fun stopRemotePlayNow() {
         remotePlayActive = false
+        GameTitleWatcher.stop()
         OcrSubtitlePipeline.stop()
         RemotePlayController.stop()
     }

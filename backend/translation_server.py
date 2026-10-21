@@ -3,7 +3,10 @@
 
 The TV connects over WebSocket and sends each subtitle line it reads from the game:
     {"type": "source", "sequence": 12, "text": "Dunn: You gotta listen to heavy metal."}
-The backend translates it (with the last few lines as context) and replies:
+The TV also reports the game running on the PS5 (from its hello message):
+    {"type": "hello", ..., "game": "Call of Duty: Black Ops 6"}
+The backend translates each line (with the game, its glossary, and the last few lines as
+context) and replies:
     {"type": "subtitle", "sequence": 12, "originalText": "...", "translatedText": "...",
      "sourceLanguage": "en", "targetLanguage": "zh-CN", "isFinal": true, "latencyMs": 900}
 
@@ -28,6 +31,7 @@ from collections import deque
 from pathlib import Path
 
 import ws
+from glossary import GlossaryStore, clean_game_name
 from translator import ClaudeTranslator, ContextLine, DeepSeekTranslator, FakeTranslator, Translator
 
 log = logging.getLogger("server")
@@ -46,14 +50,27 @@ def load_dotenv(path: Path) -> None:
 
 
 class Connection:
-    def __init__(self, writer: asyncio.StreamWriter, translator: Translator, game: str | None):
+    def __init__(self, writer: asyncio.StreamWriter, translator: Translator, game: str | None,
+                 glossaries: GlossaryStore):
         self.writer = writer
         self.translator = translator
-        self.game = game
+        self.glossaries = glossaries
+        self.game: str | None = None
+        self.glossary = None
         self.target_language = "zh-CN"
         self.context: deque[ContextLine] = deque(maxlen=CONTEXT_LINES)
         self.send_lock = asyncio.Lock()
         self.tasks: set[asyncio.Task] = set()
+        self.set_game(game)
+
+    def set_game(self, game: str | None) -> None:
+        game = clean_game_name(game)
+        if not game or game == self.game:
+            return
+        log.info("Game: %s", game)
+        self.game = game
+        self.glossary = self.glossaries.get(game)
+        self.context.clear()  # lines from another game would only confuse the translator
 
     async def send(self, message: dict) -> None:
         data = json.dumps(message, ensure_ascii=False).encode()
@@ -69,8 +86,9 @@ class Connection:
         kind = msg.get("type")
         if kind == "hello":
             self.target_language = msg.get("targetLanguage") or self.target_language
-            self.game = msg.get("game") or self.game
             log.info("TV hello: %s", msg)
+            if isinstance(msg.get("game"), str):
+                self.set_game(msg["game"])
         elif kind == "source" and isinstance(msg.get("text"), str) and isinstance(msg.get("sequence"), int):
             task = asyncio.create_task(self.translate(msg["sequence"], msg["text"]))
             self.tasks.add(task)
@@ -78,8 +96,11 @@ class Connection:
 
     async def translate(self, sequence: int, text: str) -> None:
         started = time.monotonic()
+        context = list(self.context)
+        glossary = self.glossary
+        known = glossary.relevant([text] + [c.source for c in context]) if glossary else None
         try:
-            result = await self.translator.translate(text, list(self.context), self.game)
+            result = await self.translator.translate(text, context, self.game, known)
         except Exception as e:  # network/API errors: log and skip this line
             log.error("#%d translation failed: %s: %s", sequence, type(e).__name__, e)
             return
@@ -88,6 +109,13 @@ class Connection:
             log.info("#%d skipped (not dialogue / declined) %dms: %s", sequence, latency_ms, text)
             return
         self.context.append(ContextLine(result.source, result.translation))
+        # Only keep terms whose Chinese really appears in the line, so the glossary
+        # records what was shown, not what the model claimed.
+        terms = {en: zh for en, zh in result.terms.items() if zh in result.translation}
+        if glossary and terms:
+            added = glossary.learn(terms)
+            if added:
+                log.info("#%d new glossary terms: %s", sequence, added)
         log.info("#%d %dms [%s in=%d out=%d]\n    EN: %s\n    ZH: %s", sequence, latency_ms,
                  result.model, result.input_tokens, result.output_tokens, result.source, result.translation)
         await self.send({
@@ -102,7 +130,8 @@ class Connection:
         })
 
 
-async def serve_client(reader, writer, translator: Translator, game: str | None) -> None:
+async def serve_client(reader, writer, translator: Translator, game: str | None,
+                       glossaries: GlossaryStore) -> None:
     peer = writer.get_extra_info("peername")
     try:
         if not await ws.handshake(reader, writer):
@@ -110,7 +139,7 @@ async def serve_client(reader, writer, translator: Translator, game: str | None)
     except (asyncio.IncompleteReadError, ConnectionError):
         return
     log.info("TV connected: %s", peer)
-    conn = Connection(writer, translator, game)
+    conn = Connection(writer, translator, game, glossaries)
     try:
         while True:
             opcode, data = await ws.read_frame(reader)
@@ -145,7 +174,7 @@ def lan_ip() -> str:
 async def main() -> None:
     parser = argparse.ArgumentParser(description="LiveTranslateTV translation backend")
     parser.add_argument("--port", type=int, default=8766)
-    parser.add_argument("--game", help="game title, gives the translator context")
+    parser.add_argument("--game", help="game title to use until the TV reports the running game")
     parser.add_argument("--fake", action="store_true", help="offline fake translator (no API calls)")
     parser.add_argument("--provider", choices=["deepseek", "claude"], default="deepseek")
     parser.add_argument("--model", help="provider model (default: deepseek-flash / claude-opus-5-5)")
@@ -166,7 +195,9 @@ async def main() -> None:
         translator = ClaudeTranslator(model=args.model or "claude-opus-5-5", effort=args.effort)
 
     try:
-        server = await asyncio.start_server(lambda r, w: serve_client(r, w, translator, args.game), "0.0.0.0", args.port)
+        glossaries = GlossaryStore()
+        server = await asyncio.start_server(
+            lambda r, w: serve_client(r, w, translator, args.game, glossaries), "0.0.0.0", args.port)
         log.info("Translation backend (%s) on ws://%s:%d", translator.name, lan_ip(), args.port)
         async with server:
             await server.serve_forever()

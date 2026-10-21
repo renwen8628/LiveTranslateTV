@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 log = logging.getLogger("translator")
@@ -24,12 +24,17 @@ class Translation:
     model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    # Proper nouns / game terms in this line and the Chinese used, for the glossary.
+    terms: dict[str, str] = field(default_factory=dict)
 
 
 class Translator(Protocol):
     name: str
 
-    async def translate(self, text: str, context: list[ContextLine], game: str | None) -> Translation: ...
+    async def translate(
+        self, text: str, context: list[ContextLine], game: str | None,
+        glossary: dict[str, str] | None = None,
+    ) -> Translation: ...
 
 
 class FakeTranslator:
@@ -37,7 +42,10 @@ class FakeTranslator:
 
     name = "fake"
 
-    async def translate(self, text: str, context: list[ContextLine], game: str | None) -> Translation:
+    async def translate(
+        self, text: str, context: list[ContextLine], game: str | None,
+        glossary: dict[str, str] | None = None,
+    ) -> Translation:
         return Translation(source=text, translation=f"【测试】{text}", model="fake")
 
 
@@ -63,28 +71,70 @@ terms use standard Chinese military vocabulary. Do not soften, explain, or add a
 - If the input is not dialogue (menu labels, button hints, HUD numbers, random characters), \
 return empty strings for both fields.
 
-Reply with the corrected English in "source" and the Chinese in "translation"."""
+Glossary: when the prompt lists glossary entries, use exactly that Chinese for those terms \
+so names stay consistent across the whole game. In "terms", list each proper noun or \
+game-specific term in this line (character names and call signs used inside the dialogue, \
+places, factions, units, operations, weapons, vehicles, items, abilities), with "zh" copied \
+exactly from your translation, so if you kept a name in English, "zh" is that English. \
+Leave out ordinary words (package, target, base, sir) and the speaker label before the \
+colon. Use an empty list when there are none.
+
+Reply with the corrected English in "source", the Chinese in "translation", and "terms"."""
+
+
+def system_prompt(game: str | None) -> str:
+    """The game goes in the system prompt so it stays a stable, cacheable prefix."""
+    if not game:
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + f"""
+
+The game is "{game}". Translate like its official Simplified Chinese localization: \
+where you know the official Chinese names for its characters, places, factions, weapons, \
+and other terms, use them; otherwise pick natural names in the same style. Match the \
+game's setting and tone."""
 
 OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
         "source": {"type": "string"},
         "translation": {"type": "string"},
+        "terms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"en": {"type": "string"}, "zh": {"type": "string"}},
+                "required": ["en", "zh"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["source", "translation"],
+    "required": ["source", "translation", "terms"],
     "additionalProperties": False,
 }
 
 
-def subtitle_prompt(text: str, context: list[ContextLine], game: str | None) -> str:
+def subtitle_prompt(text: str, context: list[ContextLine], glossary: dict[str, str] | None) -> str:
     parts = []
-    if game:
-        parts.append(f"Game: {game}")
+    if glossary:
+        parts.append("Glossary for this game (English = Chinese):\n" +
+                     "\n".join(f"- {en} = {zh}" for en, zh in glossary.items()))
     if context:
         parts.append("Recent lines, oldest first:")
         parts += [f"- EN: {c.source}\n  ZH: {c.translation}" for c in context]
     parts.append(f"Translate this subtitle line:\n{text}")
     return "\n\n".join(parts)
+
+
+def parse_terms(raw: object) -> dict[str, str]:
+    """Reads the optional "terms" list; anything malformed is ignored, not fatal."""
+    terms = {}
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict) and isinstance(item.get("en"), str) and isinstance(item.get("zh"), str):
+                en, zh = item["en"].strip(), item["zh"].strip()
+                if en and zh:
+                    terms[en] = zh
+    return terms
 
 
 class DeepSeekTranslator:
@@ -108,13 +158,17 @@ class DeepSeekTranslator:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def translate(self, text: str, context: list[ContextLine], game: str | None) -> Translation:
+    async def translate(
+        self, text: str, context: list[ContextLine], game: str | None,
+        glossary: dict[str, str] | None = None,
+    ) -> Translation:
         response = await self._client.post("/chat/completions", json={
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT + '\nReturn only a JSON object, '
-                 'for example: {"source": "Park: Go!", "translation": "Park：快走！"}'},
-                {"role": "user", "content": subtitle_prompt(text, context, game)},
+                {"role": "system", "content": system_prompt(game) + '\nReturn only a JSON object, '
+                 'for example: {"source": "Park: Price, go!", "translation": "Park：普莱斯，快走！", '
+                 '"terms": [{"en": "Price", "zh": "普莱斯"}]}'},
+                {"role": "user", "content": subtitle_prompt(text, context, glossary)},
             ],
             "response_format": {"type": "json_object"},
             "thinking": {"type": "disabled"},
@@ -144,6 +198,7 @@ class DeepSeekTranslator:
             raise ValueError("DeepSeek response must contain string source and translation fields")
         result.source = data["source"].strip() or text
         result.translation = data["translation"].strip()
+        result.terms = parse_terms(data.get("terms"))
         return result
 
 
@@ -162,13 +217,16 @@ class ClaudeTranslator:
         self.model = model
         self.effort = effort
 
-    async def translate(self, text: str, context: list[ContextLine], game: str | None) -> Translation:
+    async def translate(
+        self, text: str, context: list[ContextLine], game: str | None,
+        glossary: dict[str, str] | None = None,
+    ) -> Translation:
         response = await self._client.beta.messages.create(
             model=self.model,
             # Room for adaptive thinking plus a one-line JSON answer.
             max_tokens=2000,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": subtitle_prompt(text, context, game)}],
+            system=system_prompt(game),
+            messages=[{"role": "user", "content": subtitle_prompt(text, context, glossary)}],
             # Effort is the speed/depth control on this model (thinking is always on).
             output_config={
                 "effort": self.effort,
@@ -203,4 +261,5 @@ class ClaudeTranslator:
         data = json.loads(body)
         result.source = data["source"] or text
         result.translation = data["translation"]
+        result.terms = parse_terms(data.get("terms"))
         return result

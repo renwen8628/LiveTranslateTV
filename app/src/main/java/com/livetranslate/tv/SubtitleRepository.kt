@@ -43,8 +43,11 @@ object SubtitleRepository {
     private var clearedUpTo = -1L
     private const val LATE_TRANSLATION_MS = 3_000L
     private var socket: WebSocket? = null
-    private var sentLanguages: Pair<String, String>? = null
     private var languages = "en" to "zh-CN"
+    /** Game running on the PS5, so the backend can translate with that game's names and terms. */
+    private var game: String? = null
+    /** What the last hello told the backend; another hello is sent when this changes. */
+    private var sentHello: Pair<Pair<String, String>, String?>? = null
 
     private val client by lazy {
         SubtitleWebSocketClient(
@@ -54,7 +57,7 @@ object SubtitleRepository {
                 lastSequence = -1L
                 lastSequenceFinal = false
                 clearedUpTo = -1L
-                sentLanguages = null
+                sentHello = null
                 sendHello()
             },
             onText = ::handleText,
@@ -81,7 +84,7 @@ object SubtitleRepository {
             url == null -> disconnect(ConnectionStatus.NotConfigured)
             else -> {
                 client.connect(url, settings.serverToken)
-                sendHello() // no-op unless connected and languages changed
+                sendHello() // no-op unless connected and languages or game changed
             }
         }
     }
@@ -108,6 +111,13 @@ object SubtitleRepository {
         return ws.send(msg.toString())
     }
 
+    /** The PS5 reported a newly running game. */
+    fun setGame(name: String) {
+        if (name == game) return
+        game = name
+        sendHello()
+    }
+
     /** A line with this sequence is now on screen locally; replies for older lines are outdated. */
     fun noteLocalLine(sequence: Long) {
         if (sequence > lastSequence) {
@@ -132,17 +142,19 @@ object SubtitleRepository {
         return if (httpEquivalent.toHttpUrlOrNull() != null) url else null
     }
 
-    /** Tells the backend which languages we want, so it can be shared across TVs later. */
+    /** Tells the backend which languages we want and which game is running. */
     private fun sendHello() {
         val ws = socket ?: return
-        if (sentLanguages == languages) return
+        val state = languages to game
+        if (sentHello == state) return
         val hello = JSONObject()
             .put("type", "hello")
             .put("client", "livetranslate-tv")
             .put("protocolVersion", 1)
             .put("sourceLanguage", languages.first)
             .put("targetLanguage", languages.second)
-        if (ws.send(hello.toString())) sentLanguages = languages
+        game?.let { hello.put("game", it) }
+        if (ws.send(hello.toString())) sentHello = state
     }
 
     private fun handleText(text: String) {
