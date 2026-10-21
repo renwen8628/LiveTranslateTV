@@ -43,7 +43,6 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
     private lateinit var windowManager: WindowManager
     private var overlayView: SubtitleOverlayView? = null
     private var overlayWindow: FrameLayout? = null // full-width transparent root of the overlay window
-    private var layoutParams: WindowManager.LayoutParams? = null
     private var isForeground = false
     /** Whether this service started Remote Play + OCR (follows settings.remotePlayEnabled). */
     private var remotePlayActive = false
@@ -210,16 +209,20 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
         // The window spans the screen width and the subtitle box inside it sizes to its text.
         // A WRAP_CONTENT window would make Android measure text at its default dialog width
         // (~500 px on the TCL TV), wrapping lines far earlier than the box's own max width.
+        // The window is also full height and never resizes: a WRAP_CONTENT window has to be
+        // resized by the system whenever the text height changes, and on the TV that lags, so
+        // new text flashed higher up for a moment before dropping into place. The subtitle's
+        // height from the bottom is a margin inside the window instead.
         val window = FrameLayout(this).apply {
             addView(view, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM,
-            ))
+            ).apply { bottomMargin = verticalOffsetPx(SubtitleManager.settings) })
         }
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             // Never take key focus or touches: remote navigation must reach the app below.
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -228,14 +231,12 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = verticalOffsetPx(SubtitleManager.settings)
         }
 
         try {
             windowManager.addView(window, params)
             overlayWindow = window
             overlayView = view
-            layoutParams = params
             SubtitleManager.addListener(this) // renders current state immediately
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add overlay", e)
@@ -244,21 +245,16 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
 
     override fun onSubtitleStateChanged(subtitle: Subtitle, settings: SubtitleSettings) {
         val view = overlayView ?: return
-        val window = overlayWindow ?: return
-        val params = layoutParams ?: return
         view.render(subtitle, settings)
         // The connection lives only while the overlay is up; sync() is cheap when nothing changed.
         SubtitleRepository.sync(settings)
         syncRemotePlay(settings)
 
+        val boxParams = view.layoutParams as FrameLayout.LayoutParams
         val y = verticalOffsetPx(settings)
-        if (params.y != y) {
-            params.y = y
-            try {
-                windowManager.updateViewLayout(window, params)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to move overlay", e)
-            }
+        if (boxParams.bottomMargin != y) {
+            boxParams.bottomMargin = y
+            view.layoutParams = boxParams
         }
     }
 
@@ -308,7 +304,6 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
         }
         overlayView = null
         overlayWindow = null
-        layoutParams = null
     }
 
     private fun stopService() {
