@@ -30,6 +30,7 @@ class SubtitleWebSocketClient(
         .build()
 
     private var url: String? = null
+    private var token: String = ""
     private var socket: WebSocket? = null
     private var attempt = 0
 
@@ -39,11 +40,12 @@ class SubtitleWebSocketClient(
     private val reconnectRunnable = Runnable { openSocket() }
 
     /** Connects to [newUrl], replacing any existing connection. No-op if already on that URL. */
-    fun connect(newUrl: String) {
+    fun connect(newUrl: String, newToken: String = "") {
         // url is only non-null while connecting, connected, or waiting to reconnect.
-        if (newUrl == url) return
+        if (newUrl == url && newToken == token) return
         stop()
         url = newUrl
+        token = newToken
         attempt = 0
         openSocket()
     }
@@ -54,6 +56,7 @@ class SubtitleWebSocketClient(
         socket?.close(NORMAL_CLOSURE, "client stopped")
         socket = null
         url = null
+        token = ""
         attempt = 0
     }
 
@@ -67,7 +70,12 @@ class SubtitleWebSocketClient(
     private fun openSocket() {
         val target = url ?: return
         val request = try {
-            Request.Builder().url(target).build()
+            require(token.isBlank() || target.startsWith("wss://", ignoreCase = true)) {
+                "An access token requires wss://"
+            }
+            Request.Builder().url(target).apply {
+                if (token.isNotBlank()) header("Authorization", "Bearer $token")
+            }.build()
         } catch (e: IllegalArgumentException) {
             // Bad URL: retrying will not help, but keep backing off so the status stays visible.
             scheduleReconnect("invalid URL")

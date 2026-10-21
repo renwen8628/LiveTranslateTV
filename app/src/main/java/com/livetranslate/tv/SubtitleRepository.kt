@@ -80,7 +80,7 @@ object SubtitleRepository {
             !settings.serverEnabled -> disconnect(ConnectionStatus.Disabled)
             url == null -> disconnect(ConnectionStatus.NotConfigured)
             else -> {
-                client.connect(url)
+                client.connect(url, settings.serverToken)
                 sendHello() // no-op unless connected and languages changed
             }
         }

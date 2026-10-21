@@ -24,6 +24,7 @@ class SubtitlePreferences(context: Context) {
             targetLanguage = prefs.getString(KEY_TARGET_LANG, d.targetLanguage) ?: d.targetLanguage,
             bilingual = prefs.getBoolean(KEY_BILINGUAL, d.bilingual),
             serverUrl = prefs.getString(KEY_SERVER_URL, d.serverUrl) ?: d.serverUrl,
+            serverToken = prefs.getString("server_token", "").orEmpty(),
             serverEnabled = prefs.getBoolean(KEY_SERVER_ENABLED, d.serverEnabled),
             remotePlayEnabled = prefs.getBoolean(KEY_REMOTE_PLAY_ENABLED, d.remotePlayEnabled),
         )
@@ -41,6 +42,7 @@ class SubtitlePreferences(context: Context) {
             .putBoolean(KEY_BILINGUAL, s.bilingual)
             .putString(KEY_SERVER_URL, s.serverUrl)
             .putBoolean(KEY_SERVER_ENABLED, s.serverEnabled)
+            .putString("server_token", s.serverToken)
             .putBoolean(KEY_REMOTE_PLAY_ENABLED, s.remotePlayEnabled)
             .apply()
     }

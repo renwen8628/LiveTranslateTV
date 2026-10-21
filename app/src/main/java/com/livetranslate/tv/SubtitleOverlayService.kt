@@ -91,7 +91,8 @@ class SubtitleOverlayService : Service(), SubtitleManager.Listener {
                 val url = intent.getStringExtra(EXTRA_SERVER_URL)
                 val enabled = intent.getBooleanExtra(EXTRA_SERVER_ENABLED, true)
                 SubtitleManager.updateSettings { s ->
-                    s.copy(serverUrl = url?.trim() ?: s.serverUrl, serverEnabled = enabled)
+                    s.copy(serverUrl = url?.trim() ?: s.serverUrl, serverEnabled = enabled,
+                        serverToken = intent.getStringExtra("server_token")?.trim() ?: s.serverToken)
                 }
                 if (overlayView == null) stopSelf(startId)
             }

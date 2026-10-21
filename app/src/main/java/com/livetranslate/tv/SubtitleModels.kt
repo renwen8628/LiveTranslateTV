@@ -63,6 +63,7 @@ data class SubtitleSettings(
     /** ws:// or wss:// address of the subtitle backend. Never holds credentials. */
     val serverUrl: String = "",
     val serverEnabled: Boolean = false,
+    val serverToken: String = "",
     /** Read subtitles from the PS5 over Remote Play while subtitles are on. */
     val remotePlayEnabled: Boolean = false,
 ) {

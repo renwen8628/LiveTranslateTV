@@ -35,6 +35,7 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
     private lateinit var toggleButton: Button
     private lateinit var permissionButton: Button
     private lateinit var serverUrlInput: EditText
+    private lateinit var serverTokenInput: EditText
     private lateinit var connectionText: TextView
     private lateinit var translateButton: Button
     private lateinit var pairButton: Button
@@ -136,6 +137,7 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
     }
 
     override fun onStop() {
+        saveServerToken()
         SubtitleManager.removeListener(this)
         SubtitleRepository.removeListener(this)
         RemotePlayController.removeListener(this)
@@ -220,6 +222,24 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
             ).apply { bottomMargin = dp(8) },
         )
 
+        serverTokenInput = EditText(this).apply {
+            hint = "Server access token (cloud hosting)"
+            setText(SubtitleManager.settings.serverToken)
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setBackgroundResource(R.drawable.setting_row_background)
+            setTextColor(ContextCompat.getColorStateList(this@MainActivity, R.color.setting_row_text))
+            setHintTextColor(0xFF90A4AE.toInt())
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_DONE) saveServerToken()
+                false
+            }
+            setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) saveServerToken() }
+        }
+        rowsContainer.addView(serverTokenInput)
+
         // Milestone 4 diagnostics.
         addButton("Audio capture test: microphone") { startAudioProbe("mic") }
         addButton("Audio capture test: app playback") { startAudioProbe("playback") }
@@ -231,6 +251,13 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
             setPadding(0, 0, 0, dp(16))
         }
         rowsContainer.addView(connectionText, 0)
+    }
+
+    private fun saveServerToken() {
+        val token = serverTokenInput.text.toString().trim()
+        if (token != SubtitleManager.settings.serverToken) {
+            SubtitleManager.updateSettings { it.copy(serverToken = token) }
+        }
     }
 
     private fun saveServerUrl() {
@@ -275,6 +302,9 @@ class MainActivity : FragmentActivity(), SubtitleManager.Listener, SubtitleRepos
         settingRows.forEach { it.refresh(settings) }
         if (!serverUrlInput.hasFocus() && serverUrlInput.text.toString() != settings.serverUrl) {
             serverUrlInput.setText(settings.serverUrl) // e.g. changed over ADB
+        }
+        if (!serverTokenInput.hasFocus() && serverTokenInput.text.toString() != settings.serverToken) {
+            serverTokenInput.setText(settings.serverToken)
         }
         refreshConnection()
     }
